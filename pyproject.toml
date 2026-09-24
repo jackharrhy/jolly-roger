@@ -1,7 +1,7 @@
 [project]
 name = "jolly-roger"
 version = "0.1.0"
-description = "Local port forwarding for Rogers gateways"
+description = "Port forwarding for Rogers gateways without the app"
 requires-python = ">=3.12"
 dependencies = ["httpx>=0.28", "python-dotenv>=1.0", "beautifulsoup4>=4.12"]
 
