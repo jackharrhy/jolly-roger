@@ -1,6 +1,6 @@
 # jolly-roger
 
-Port forward on a Rogers router without the stupid app.
+Port forward a Rogers router without the stupid app.
 
 List rules, add/remove, enable/disable 'em, from a Python CLI.
 
