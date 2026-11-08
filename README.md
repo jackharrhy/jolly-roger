@@ -52,3 +52,20 @@ rolled back. Readback does not prove Internet reachability—test from another n
 Based on the [RDK web interface](https://github.com/rdkcentral/webui) and the local
 Bell web client (`/gui/js/gui-api.js`, `/gui/js/gui-core.js`, `/main-bundle.js`).
 Not affiliated with either provider. Never put router credentials in issues or PRs.
+
+## Backends
+
+`models.py` owns router-neutral requests/results; `backend.py` defines the common
+`Router` interface and capabilities. Implementations live in `backends/rdk/`
+(Rogers/RDK) and `backends/bell/`, each owning its fingerprint, identifier rules,
+authentication, wire protocol and state verification. The CLI knows neither family.
+
+To add a family, implement `Router`, declare a `Backend` in its package, and register
+it in `backends/__init__.py`. No CLI branches or dynamic plugin machinery are needed.
+Use `RuleSpec` for additions; both backends return the same typed results, including
+`Removal` and bounded `ScanResult` with explicit partial records. Old flat Python
+module paths are removed; shell commands remain unchanged. The test suite includes
+a synthetic third backend with opaque identifiers to exercise this extension path.
+
+Development checks: `uv run pytest -q`, `uv run mypy --check-untyped-defs src/jolly_roger`,
+`uv run ruff check .`, `uv run ruff format --check .`, and `uv build`.

@@ -11,7 +11,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 from playwright.sync_api import sync_playwright
-from test_cli import run
+
+from tests.cli import run
 
 
 def test_simulated_gateway_full_cli_lifecycle():

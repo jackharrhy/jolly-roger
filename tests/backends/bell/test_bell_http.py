@@ -4,8 +4,8 @@ import json
 import httpx
 import pytest
 
-from jolly_roger.bell_transport import BellHttpTransport
-from jolly_roger.router import RouterError
+from jolly_roger.backends.bell.http import BellHttpTransport
+from jolly_roger.models import RouterError
 
 OK = 16777238
 

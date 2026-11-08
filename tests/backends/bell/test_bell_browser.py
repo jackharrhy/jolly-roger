@@ -3,9 +3,9 @@
 import pytest
 from playwright.sync_api import sync_playwright
 
-from jolly_roger.bell import BellRouter
-from jolly_roger.bell_transport import BellBrowserTransport
-from jolly_roger.router import RouterError
+from jolly_roger.backends.bell.browser import BellBrowserTransport
+from jolly_roger.backends.bell.router import BellRouter
+from jolly_roger.models import RouterError
 
 HTML = """<script>
 window.rows = [{uid: 1200, Description: 'web', Enable: true, Protocol: 'TCP',

@@ -6,20 +6,9 @@ cleanup: a failed multi-step add may leave an incomplete, disabled entry.
 
 from dataclasses import replace
 
-from .router import Listing, RouterError, Rule, positive
-
-PATH = "Device/NAT/PortMappings"
-
-
-def row_id(row):
-    value = row.get("uid", row.get("@uid"))
-    if "uid" in row and "@uid" in row and row["uid"] != row["@uid"]:
-        raise RouterError("Conflicting Bell mapping identifiers")
-    return positive(value, 4294967295)
-
-
-def node(id):
-    return f"{PATH}/PortMapping[@uid='{positive(id, 4294967295)}']"
+from ...backend import Router
+from ...models import Listing, Removal, RouterError, Rule, RuleId, RuleSpec, positive
+from .protocol import PATH, node, parse_id, row_id
 
 
 def parse_row(row):
@@ -51,7 +40,7 @@ def enabled_row(row, enabled):
     return result
 
 
-class BellRouter:
+class BellRouter(Router):
     def __init__(self, transport):
         self.transport = transport
 
@@ -85,7 +74,7 @@ class BellRouter:
             "Bell NAT mappings; protected DMZ entry omitted; no global forwarding switch",
         )
 
-    def status(self):
+    def status(self) -> Listing:
         return self._listing(self._raw())
 
     def _writable(self):
@@ -95,7 +84,7 @@ class BellRouter:
         return rows
 
     def _target(self, rows, id):
-        id = positive(id, 4294967295)
+        id = parse_id(id)
         if id not in rows:
             raise RouterError("Rule ID not present in inventory")
         row = rows[id]
@@ -119,13 +108,8 @@ class BellRouter:
             )
         return after
 
-    def set_global(self, enabled):
-        raise RouterError("Bell does not expose this global forwarding switch")
-
-    def scan(self, max_id):
-        raise RouterError("Bell has a collection inventory; use list, not RDK edit-page scan")
-
-    def set_enabled(self, id, enabled):
+    def set_enabled(self, id: RuleId, enabled: bool) -> Rule:
+        id = parse_id(id)
         if type(enabled) is not bool:
             raise RouterError("Expected boolean rule state")
         rows = self._writable()
@@ -134,30 +118,21 @@ class BellRouter:
             return rule
         self.transport.request("setValue", node(rule.id) + "/Enable", enabled)
         expected = {k: dict(v) for k, v in rows.items()}
-        expected[rule.id] = enabled_row(expected[rule.id], enabled)
-        self._verify(expected, updated={rule.id})
+        expected[id] = enabled_row(expected[id], enabled)
+        self._verify(expected, updated={id})
         return replace(rule, enabled=enabled)
 
-    def remove(self, id):
+    def remove(self, id: RuleId) -> Removal:
+        id = parse_id(id)
         rows = self._writable()
         rule = self._target(rows, id)
         self.transport.request("deleteChild", node(rule.id))
         self._verify({k: v for k, v in rows.items() if k != rule.id})
-        return rule
+        return Removal(rule.id)
 
-    def add(self, name, protocol, ip, start, end):
-        start, end = positive(start), positive(end)
-        requested = Rule(
-            1,
-            name,
-            protocol,
-            ip,
-            positive(start),
-            positive(end),
-            True,
-            internal_start=positive(start),
-        )
-        requested.validate()
+    def add(self, rule: RuleSpec) -> Rule:
+        rule.validate()
+        name, protocol, ip, start, end = rule.name, rule.protocol, rule.ip, rule.start, rule.end
         before = self._writable()
 
         def protocols(p):
@@ -174,7 +149,7 @@ class BellRouter:
         created = self.transport.request("addChild", PATH, {})
         if not isinstance(created, dict):
             raise RouterError("Bell add outcome unknown; inspect before retrying")
-        id = positive(created.get("uid"), 4294967295)
+        id = parse_id(created.get("uid"))
         rows = self._raw()
         if (
             id in before

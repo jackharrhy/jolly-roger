@@ -10,8 +10,8 @@ import pytest
 def test_browser_same_origin_fetch_and_private_token():
     from playwright.sync_api import sync_playwright
 
-    from jolly_roger.browser import BrowserTransport
-    from jolly_roger.router import RouterError
+    from jolly_roger.backends.rdk.browser import BrowserTransport
+    from jolly_roger.models import RouterError
 
     calls = []
     mode = {"token": True, "redirect": False, "response": '"Success!"'}

@@ -3,18 +3,18 @@ import getpass
 import json
 import os
 import sys
+from contextlib import AbstractContextManager
 from dataclasses import asdict, is_dataclass
 from urllib.parse import urlsplit
 
 import httpx
 from dotenv import load_dotenv
 
-from .bell import BellRouter
-from .bell_transport import BellBrowserTransport, BellHttpTransport
-from .browser import BrowserTransport, gateway_origin
-from .discovery import detect_backend, discover_gateway
-from .http import HttpTransport
-from .router import Router, RouterError, Rule, positive
+from . import backends
+from .backend import Backend, Router
+from .connection import browser_session
+from .gateway import discover_gateway, gateway_origin
+from .models import Listing, Removal, RouterError, Rule, RuleSpec, ScanResult, positive
 
 
 def parser():
@@ -29,7 +29,7 @@ def parser():
     )
     p.add_argument(
         "--backend",
-        choices=("auto", "rdk", "bell"),
+        choices=("auto", *(backend.name for backend in backends.BACKENDS)),
         default="auto",
         help="Require a matching router family; auto uses public interface fingerprints",
     )
@@ -39,7 +39,9 @@ def parser():
     scan = commands.add_parser(
         "scan", help="Read-only, bounded edit-page discovery; never claims completeness"
     )
-    scan.add_argument("--max-id", required=True, help="Explicit inclusive bound, 1–999")
+    scan.add_argument(
+        "--max-id", required=True, help="Explicit inclusive bound; limited by the selected backend"
+    )
     for name in ("remove", "enable", "disable", "global-enable", "global-disable"):
         command = commands.add_parser(name)
         if not name.startswith("global-"):
@@ -60,16 +62,14 @@ def parser():
 
 def validate(args):
     args.gateway = gateway_origin(args.gateway) if args.gateway else None
-    if args.command in ("remove", "enable", "disable"):
-        args.id = positive(args.id, 4294967295)
     if args.command == "scan":
-        args.max_id = positive(args.max_id, 999)
+        args.max_id = positive(args.max_id)
     if args.command == "add":
-        args.start = positive(args.start)
-        args.end = positive(args.end if args.end is not None else args.start)
-        Rule(1, args.name, args.protocol, args.ip, args.start, args.end, True).validate()
+        args.rule = RuleSpec.parse(args.name, args.protocol, args.ip, args.start, args.end)
         if args.scan_max_id is not None:
-            args.scan_max_id = positive(args.scan_max_id, 999)
+            args.scan_max_id = positive(args.scan_max_id)
+    if args.backend != "auto":
+        validate_backend(args, backends.named_backend(args.backend))
     args.gateway = args.gateway or discover_gateway()
     if args.command == "add" and args.ip == urlsplit(args.gateway).hostname:
         raise RouterError("Target cannot be the gateway address")
@@ -80,7 +80,16 @@ def validate(args):
             raise RouterError("Mutation cancelled")
 
 
-def dispatch(router, args):
+def validate_backend(args, backend: Backend) -> None:
+    backend.capabilities.require(args.command)
+    if hasattr(args, "id"):
+        args.id = backend.parse_id(args.id)
+    bound = args.max_id if args.command == "scan" else getattr(args, "scan_max_id", None)
+    if bound is not None:
+        backend.capabilities.scan_bound(bound)
+
+
+def dispatch(router: Router, args) -> Listing | Rule | Removal | ScanResult:
     if args.command in ("list", "status"):
         return router.status()
     if args.command == "scan":
@@ -94,11 +103,21 @@ def dispatch(router, args):
     if args.scan_max_id is not None:
         # Discovery is diagnostic, never authorization to invent absent fields.
         inventory = router.scan(args.scan_max_id)
-        if any(r["enabled"] is None for r in inventory["rules"]):
+        if any(r.enabled is None for r in inventory.rules):
             raise RouterError(
                 "Bounded scan found rules without enabled state; refusing add on gated firmware"
             )
-    return router.add(args.name, args.protocol, args.ip, args.start, args.end)
+    return router.add(args.rule)
+
+
+def credentials() -> tuple[str, str]:
+    username = os.getenv("JOLLY_ROGER_USERNAME", "admin")
+    password = os.getenv("JOLLY_ROGER_PASSWORD")
+    if not password:
+        if not sys.stdin.isatty():
+            raise RouterError("Set JOLLY_ROGER_PASSWORD in .env or use a terminal password prompt")
+        password = getpass.getpass("Router password: ")
+    return username, password
 
 
 def main(argv=None):
@@ -109,55 +128,21 @@ def main(argv=None):
         with httpx.Client(
             base_url=args.gateway, timeout=10, follow_redirects=False, trust_env=False
         ) as probe:
-            backend = detect_backend(probe)
-        if args.backend != "auto" and args.backend != backend:
-            raise RouterError("Detected router does not match requested --backend; no login sent")
+            backend = backends.detect_backend(probe, args.backend)
+        validate_backend(args, backend)
+        result: Listing | Rule | Removal | ScanResult | dict[str, str]
         if args.command == "detect":
-            print(json.dumps({"gateway": args.gateway, "backend": backend}, indent=2))
-            return 0
-        if backend == "rdk" and hasattr(args, "id"):
-            positive(args.id, 999)
-        router_type, http_type, browser_type = {
-            "rdk": (Router, HttpTransport, BrowserTransport),
-            "bell": (BellRouter, BellHttpTransport, BellBrowserTransport),
-        }[backend]
-        if not args.cdp_url:
-            username = os.getenv("JOLLY_ROGER_USERNAME", "admin")
-            password = os.getenv("JOLLY_ROGER_PASSWORD")
-            if not password:
-                if not sys.stdin.isatty():
-                    raise RouterError(
-                        "Set JOLLY_ROGER_PASSWORD in .env or use a terminal password prompt"
-                    )
-                password = getpass.getpass("Router password: ")
-            transport = http_type(args.gateway)
-            try:
-                transport.login(username, password)
-                result = dispatch(router_type(transport), args)
-                print(json.dumps(asdict(result) if is_dataclass(result) else result, indent=2))
-            finally:
-                transport.close()
-            return 0
-        from playwright.sync_api import sync_playwright
-
-        with sync_playwright() as p:
-            try:
-                browser = p.chromium.connect_over_cdp(args.cdp_url, timeout=15000)
-            except Exception:
-                raise RouterError(
-                    "CDP connection failed; check the trusted browser endpoint"
-                ) from None
-            pages = [
-                page
-                for context in browser.contexts
-                for page in context.pages
-                if page.url.split("/", 3)[:3] == args.gateway.split("/", 3)[:3]
-            ]
-            if not pages:
-                raise RouterError("No existing browser page on gateway origin; log in there first")
-            result = dispatch(router_type(browser_type(pages[0], args.gateway)), args)
-            print(json.dumps(asdict(result) if is_dataclass(result) else result, indent=2))
-            # Disconnect without closing the user's browser.
+            result = {"gateway": args.gateway, "backend": backend.name}
+        else:
+            session: AbstractContextManager[Router]
+            if args.cdp_url:
+                session = browser_session(backend, args.gateway, args.cdp_url)
+            else:
+                username, password = credentials()
+                session = backend.open_http(args.gateway, username, password)
+            with session as router:
+                result = dispatch(router, args)
+        print(json.dumps(asdict(result) if is_dataclass(result) else result, indent=2))
         return 0
     except RouterError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -166,9 +151,6 @@ def main(argv=None):
         print("error: cancelled", file=sys.stderr)
         return 2
     except Exception:
-        # Playwright errors may embed page HTML/URLs; never print arbitrary exception details.
-        print(
-            "error: operation failed; inspect state before retrying any write",
-            file=sys.stderr,
-        )
+        # Browser/HTTP exceptions can contain credentials or page HTML.
+        print("error: operation failed; inspect state before retrying any write", file=sys.stderr)
         return 2

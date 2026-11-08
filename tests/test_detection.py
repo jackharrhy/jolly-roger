@@ -3,8 +3,9 @@ import json
 import httpx
 import pytest
 
-from jolly_roger.discovery import detect_backend, discover_gateway
-from jolly_roger.router import RouterError
+from jolly_roger.backends import detect_backend
+from jolly_roger.gateway import discover_gateway
+from jolly_roger.models import RouterError
 
 
 def test_default_route_uses_lowest_metric_and_rejects_ambiguity():
@@ -31,7 +32,7 @@ def test_detects_bell_from_firmware_not_ip_range():
         return httpx.Response(404)
 
     with httpx.Client(base_url="http://10.0.0.1", transport=httpx.MockTransport(serve)) as client:
-        assert detect_backend(client) == "bell"
+        assert detect_backend(client).name == "bell"
     assert seen == ["/", "/gui/js/gui-core.js"]
 
 
@@ -85,4 +86,4 @@ def test_detects_rdk_login_form():
     with httpx.Client(
         base_url="http://192.168.2.1", transport=httpx.MockTransport(serve)
     ) as client:
-        assert detect_backend(client) == "rdk"
+        assert detect_backend(client).name == "rdk"

@@ -2,25 +2,13 @@
 
 import pytest
 
-GLOBAL = '<script>$("#pf_switch").radioswitch({state: true ? "on" : "off"});</script>'
-ROW = """<tr><td headers="service-name">synthetic</td><td headers="service-type">TCP</td>
-<td headers="start-port">54321</td><td headers="end-port">54322</td>
-<td headers="server-ip">10.0.0.42</td><td headers="server-ipv6"></td>
-<td headers="active"><input type="checkbox" name="PortActive" id="PortActive_7" checked></td>
-<td><a href="port_forwarding_edit.jst?id=7">Edit</a></td></tr>"""
-
-
-def listing(row=ROW):
-    return (
-        GLOBAL
-        + '<table summary="This table list available port forwarding entries">'
-        + row
-        + "</table>"
-    )
+from jolly_roger.models import PartialRule, Removal, RuleSpec
+from tests.fakes.rdk import GLOBAL, ROW, SyntheticTransport, listing
 
 
 def test_listing_and_validation():
-    from jolly_roger.router import RouterError, Rule, parse_listing, positive
+    from jolly_roger.backends.rdk.router import parse_listing
+    from jolly_roger.models import RouterError, Rule, positive
 
     result = parse_listing(listing())
     assert result.complete
@@ -56,24 +44,9 @@ def test_listing_and_validation():
         parse_listing(listing(ROW.replace('name="PortActive"', 'name="missing"')))
 
 
-class SyntheticTransport:
-    def __init__(self, pages, response='"Success!"'):
-        self.pages = iter(pages)
-        self.response = response
-        self.writes = []
-        self.reads = []
-
-    def get(self, path):
-        self.reads.append(path)
-        return next(self.pages)
-
-    def post(self, fields):
-        self.writes.append(fields)
-        return self.response
-
-
 def test_verified_mutations():
-    from jolly_roger.router import Router, RouterError
+    from jolly_roger.backends.rdk.router import RdkRouter as Router
+    from jolly_roger.models import RouterError
 
     for enabled in (True, False):
         before = listing(ROW.replace(" checked", "") if enabled else ROW)
@@ -83,7 +56,7 @@ def test_verified_mutations():
         assert result.enabled is enabled
         assert transport.writes == [dict(active="true", isChecked=str(enabled).lower(), id="7")]
     transport = SyntheticTransport([listing(), listing("")], '""')
-    assert Router(transport).remove("7") == {"removed": 7, "verified": True}
+    assert Router(transport).remove("7") == Removal(7)
     assert transport.writes == [{"del": "7"}]
     transport = SyntheticTransport([listing(), listing()], '"Success!"')
     with pytest.raises(RouterError, match="verification"):
@@ -96,7 +69,8 @@ def test_verified_mutations():
 
 
 def test_global_change_is_separate_and_verified():
-    from jolly_roger.router import Router, RouterError
+    from jolly_roger.backends.rdk.router import RdkRouter as Router
+    from jolly_roger.models import RouterError
 
     transport = SyntheticTransport([GLOBAL.replace("true", "false"), GLOBAL], '""')
     assert Router(transport).set_global(True).enabled
@@ -107,10 +81,11 @@ def test_global_change_is_separate_and_verified():
 
 
 def test_add_conflicts_and_readback():
-    from jolly_roger.router import Router, RouterError
+    from jolly_roger.backends.rdk.router import RdkRouter as Router
+    from jolly_roger.models import RouterError
 
     transport = SyntheticTransport([listing(""), listing()])
-    rule = Router(transport).add("synthetic", "TCP", "10.0.0.42", "54321", "54322")
+    rule = Router(transport).add(RuleSpec.parse("synthetic", "TCP", "10.0.0.42", "54321", "54322"))
     assert rule.id == 7
     assert transport.writes == [
         dict(
@@ -130,19 +105,20 @@ def test_add_conflicts_and_readback():
     ]:
         transport = SyntheticTransport([listing()])
         with pytest.raises(RouterError, match="conflict"):
-            Router(transport).add(name, protocol, "10.0.0.43", start, start)
+            Router(transport).add(RuleSpec.parse(name, protocol, "10.0.0.43", start, start))
         assert not transport.writes
     transport = SyntheticTransport([GLOBAL])
     with pytest.raises(RouterError, match="gated"):
-        Router(transport).add("test", "TCP", "10.0.0.43", "54323", "54323")
+        Router(transport).add(RuleSpec.parse("test", "TCP", "10.0.0.43", "54323", "54323"))
     assert not transport.writes
     transport = SyntheticTransport([listing(""), listing("")])
     with pytest.raises(RouterError, match="verification"):
-        Router(transport).add("test", "TCP", "10.0.0.43", "54323", "54323")
+        Router(transport).add(RuleSpec.parse("test", "TCP", "10.0.0.43", "54323", "54323"))
 
 
 def test_bounded_scan_keeps_gaps_and_reports_partial_fields():
-    from jolly_roger.router import Router, RouterError
+    from jolly_roger.backends.rdk.router import RdkRouter as Router
+    from jolly_roger.models import RouterError
 
     hidden = """<script>
     var ID = "3";
@@ -154,9 +130,9 @@ def test_bounded_scan_keeps_gaps_and_reports_partial_fields():
     redirect = '<script>location.href="port_forwarding.jst";</script>'
     transport = SyntheticTransport([GLOBAL, redirect, redirect, hidden])
     result = Router(transport).scan("3")
-    assert result["complete"] is False
-    assert result["unresolved_ids"] == [1, 2]
-    assert result["rules"][0] == dict(
+    assert result.complete is False
+    assert result.unresolved_ids == [1, 2]
+    assert result.rules[0] == PartialRule(
         id=3,
         name="synthetic",
         start=54321,
@@ -164,7 +140,7 @@ def test_bounded_scan_keeps_gaps_and_reports_partial_fields():
         ip=None,
         protocol=None,
         enabled=None,
-        ipv6="x",
+        ipv6="",
     )
     assert transport.reads == ["port_forwarding.jst"] + [
         f"port_forwarding_edit.jst?id={n}" for n in (1, 2, 3)
@@ -176,7 +152,8 @@ def test_bounded_scan_keeps_gaps_and_reports_partial_fields():
 
 
 def test_hidden_global_state_is_parsed_without_form():
-    from jolly_roger.router import RouterError, parse_listing
+    from jolly_roger.backends.rdk.router import parse_listing
+    from jolly_roger.models import RouterError
 
     state = parse_listing("""<script>$("#pf_switch").radioswitch({
         id: "forwarding-switch", state: false ? "on" : "off" });</script>
