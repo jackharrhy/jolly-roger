@@ -46,7 +46,7 @@ def test_simulated_gateway_full_cli_lifecycle():
         def do_GET(self):
             requests.append(("GET", self.path))
             if self.path == "/":
-                return self.send("<h1>Synthetic login</h1>", login=True)
+                return self.send('<form action="check.jst" method="post"></form>', login=True)
             if self.headers.get("Cookie") != "synthetic_session=authenticated":
                 return self.send("unauthenticated", 401)
             if self.path == "/port_forwarding.jst":

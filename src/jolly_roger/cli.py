@@ -6,25 +6,35 @@ import sys
 from dataclasses import asdict, is_dataclass
 from urllib.parse import urlsplit
 
+import httpx
 from dotenv import load_dotenv
 
+from .bell import BellRouter
+from .bell_transport import BellBrowserTransport, BellHttpTransport
 from .browser import BrowserTransport, gateway_origin
+from .discovery import detect_backend, discover_gateway
 from .http import HttpTransport
 from .router import Router, RouterError, Rule, positive
 
 
 def parser():
-    p = argparse.ArgumentParser(description="Local Rogers forwarding; JSON output, explicit writes")
+    p = argparse.ArgumentParser(description="Local router forwarding; JSON output, explicit writes")
     p.add_argument(
         "--gateway",
-        default=os.getenv("JOLLY_ROGER_GATEWAY", "http://10.0.0.1"),
-        help="Local IPv4 HTTP(S) origin",
+        default=os.getenv("JOLLY_ROGER_GATEWAY"),
+        help="Local IPv4 HTTP(S) origin; otherwise discover the IPv4 default gateway",
     )
     p.add_argument(
         "--cdp-url", help="Attach existing authenticated Chromium via a trusted CDP endpoint"
     )
+    p.add_argument(
+        "--backend",
+        choices=("auto", "rdk", "bell"),
+        default="auto",
+        help="Require a matching router family; auto uses public interface fingerprints",
+    )
     commands = p.add_subparsers(dest="command", required=True)
-    for name in ("status", "list"):
+    for name in ("detect", "status", "list"):
         commands.add_parser(name)
     scan = commands.add_parser(
         "scan", help="Read-only, bounded edit-page discovery; never claims completeness"
@@ -49,19 +59,20 @@ def parser():
 
 
 def validate(args):
-    args.gateway = gateway_origin(args.gateway)
+    args.gateway = gateway_origin(args.gateway) if args.gateway else None
     if args.command in ("remove", "enable", "disable"):
-        args.id = positive(args.id, 999)
+        args.id = positive(args.id, 4294967295)
     if args.command == "scan":
         args.max_id = positive(args.max_id, 999)
     if args.command == "add":
         args.start = positive(args.start)
         args.end = positive(args.end if args.end is not None else args.start)
         Rule(1, args.name, args.protocol, args.ip, args.start, args.end, True).validate()
-        if args.ip == urlsplit(args.gateway).hostname:
-            raise RouterError("Target cannot be the gateway address")
         if args.scan_max_id is not None:
             args.scan_max_id = positive(args.scan_max_id, 999)
+    args.gateway = args.gateway or discover_gateway()
+    if args.command == "add" and args.ip == urlsplit(args.gateway).hostname:
+        raise RouterError("Target cannot be the gateway address")
     if hasattr(args, "yes") and not args.yes:
         if not sys.stdin.isatty():
             raise RouterError("Mutation requires confirmation; pass --yes in noninteractive use")
@@ -95,6 +106,21 @@ def main(argv=None):
     args = parser().parse_args(argv)
     try:
         validate(args)
+        with httpx.Client(
+            base_url=args.gateway, timeout=10, follow_redirects=False, trust_env=False
+        ) as probe:
+            backend = detect_backend(probe)
+        if args.backend != "auto" and args.backend != backend:
+            raise RouterError("Detected router does not match requested --backend; no login sent")
+        if args.command == "detect":
+            print(json.dumps({"gateway": args.gateway, "backend": backend}, indent=2))
+            return 0
+        if backend == "rdk" and hasattr(args, "id"):
+            positive(args.id, 999)
+        router_type, http_type, browser_type = {
+            "rdk": (Router, HttpTransport, BrowserTransport),
+            "bell": (BellRouter, BellHttpTransport, BellBrowserTransport),
+        }[backend]
         if not args.cdp_url:
             username = os.getenv("JOLLY_ROGER_USERNAME", "admin")
             password = os.getenv("JOLLY_ROGER_PASSWORD")
@@ -104,10 +130,10 @@ def main(argv=None):
                         "Set JOLLY_ROGER_PASSWORD in .env or use a terminal password prompt"
                     )
                 password = getpass.getpass("Router password: ")
-            transport = HttpTransport(args.gateway)
+            transport = http_type(args.gateway)
             try:
                 transport.login(username, password)
-                result = dispatch(Router(transport), args)
+                result = dispatch(router_type(transport), args)
                 print(json.dumps(asdict(result) if is_dataclass(result) else result, indent=2))
             finally:
                 transport.close()
@@ -129,7 +155,7 @@ def main(argv=None):
             ]
             if not pages:
                 raise RouterError("No existing browser page on gateway origin; log in there first")
-            result = dispatch(Router(BrowserTransport(pages[0], args.gateway)), args)
+            result = dispatch(router_type(browser_type(pages[0], args.gateway)), args)
             print(json.dumps(asdict(result) if is_dataclass(result) else result, indent=2))
             # Disconnect without closing the user's browser.
         return 0

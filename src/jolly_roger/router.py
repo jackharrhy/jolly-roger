@@ -26,9 +26,14 @@ class Rule:
     end: int
     enabled: bool
     ipv6: str = ""
+    internal_start: int | None = None
 
     def validate(self):
-        positive(self.id, 999)
+        positive(self.id, 4294967295)
+        if self.internal_start is not None:
+            positive(self.internal_start)
+            if self.internal_start + self.end - self.start > 65535:
+                raise RouterError("Internal port range exceeds 65535")
         positive(self.start)
         positive(self.end)
         if self.start > self.end:
@@ -62,7 +67,7 @@ class RouterError(ValueError):
 
 @dataclass
 class Listing:
-    enabled: bool
+    enabled: bool | None
     rules: list
     complete: bool
     scope: str = "visible local forwarding rules; excludes HS/UPnP/system entries"
