@@ -167,7 +167,7 @@ BROWSER_REQUEST = r"""({origin, method, path, value}) => new Promise(resolve => 
     const finish = result => { clearTimeout(timer); resolve(result); };
     const fail = () => finish({error: true});
     try {
-        const request = client.newRequest({ajaxRetry: false, ajaxTimeout: 30,
+        const request = client.newRequest({ajaxRetry: false, ajaxTimeout: 30000,
             requestErrorFunc: fail, ajaxErrorFunc: fail});
         const success = result => finish({value: result === undefined ? {} : result});
         if (method === 'getValue') request.getValue(path, success, fail);

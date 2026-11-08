@@ -13,11 +13,13 @@ def mapping(uid=1200, **fields):
         "uid": uid,
         "Description": "web",
         "Enable": True,
+        "Status": "ENABLED" if fields.get("Enable", True) else "DISABLED",
         "Protocol": "TCP",
         "InternalClient": "192.168.2.30",
         "InternalPort": 8443,
         "ExternalPort": 443,
         "ExternalPortEndRange": 0,
+        "LeaseStart": "0-12-31T20:30:00-0330",
         "Alias": "",
         "Service": "",
         **fields,
@@ -43,7 +45,11 @@ class Gateway:
         if method == "deleteChild":
             self.rows.remove(row)
         elif method == "setValue":
-            row[path.rsplit("/", 1)[1]] = value
+            field = path.rsplit("/", 1)[1]
+            row[field] = value
+            row["LeaseStart"] = "2026-01-02T00:00:00Z"
+            if field == "Enable":
+                row["Status"] = "ENABLED" if value else "DISABLED"
         if self.corrupt:
             self.rows[0]["InternalPort"] = 22
         return {}
@@ -95,3 +101,12 @@ def test_partial_write_is_not_retried_or_reported_successful():
         BellRouter(gateway).add("minecraft", "TCP", "192.168.2.30", 25565, 25565)
     assert sum(c[0] == "addChild" for c in gateway.calls) == 1
     assert not any(c[1].endswith("/Enable") and c[2] is True for c in gateway.calls)
+
+
+def test_verification_does_not_ignore_unrelated_lease_timestamp_changes():
+    gateway = Gateway()
+    router = BellRouter(gateway)
+    expected = router._raw()
+    gateway.rows[0]["LeaseStart"] = "2026-01-03T00:00:00Z"
+    with pytest.raises(RouterError, match="verification"):
+        router._verify(expected, updated={1201})

@@ -44,6 +44,13 @@ def parse_row(row):
         raise RouterError("Missing or malformed Bell mapping fields") from None
 
 
+def enabled_row(row, enabled):
+    result = {**row, "Enable": enabled}
+    if "Status" in row:
+        result["Status"] = "ENABLED" if enabled else "DISABLED"
+    return result
+
+
 class BellRouter:
     def __init__(self, transport):
         self.transport = transport
@@ -96,9 +103,17 @@ class BellRouter:
             raise RouterError("Refusing mutation of a DMZ or UPnP-managed mapping")
         return parse_row(row)
 
-    def _verify(self, expected):
+    def _verify(self, expected, updated=()):
         after = self._raw()
-        if after != expected:
+        comparison = {k: dict(v) for k, v in after.items()}
+        for id in updated:
+            if id in comparison and id in expected:
+                if isinstance(comparison[id].get("LeaseStart"), str) and isinstance(
+                    expected[id].get("LeaseStart"), str
+                ):
+                    # The modem regenerates this read-only timestamp on configuration changes.
+                    comparison[id]["LeaseStart"] = expected[id]["LeaseStart"]
+        if comparison != expected:
             raise RouterError(
                 "Bell write verification failed; state changed, inspect before retrying"
             )
@@ -119,8 +134,8 @@ class BellRouter:
             return rule
         self.transport.request("setValue", node(rule.id) + "/Enable", enabled)
         expected = {k: dict(v) for k, v in rows.items()}
-        expected[rule.id]["Enable"] = enabled
-        self._verify(expected)
+        expected[rule.id] = enabled_row(expected[rule.id], enabled)
+        self._verify(expected, updated={rule.id})
         return replace(rule, enabled=enabled)
 
     def remove(self, id):
@@ -171,8 +186,8 @@ class BellRouter:
             raise RouterError("New Bell entry has unknown enabled state; inspect before continuing")
         if rows[id]["Enable"]:
             self.transport.request("setValue", node(id) + "/Enable", False)
-            rows[id]["Enable"] = False
-            self._verify(rows)
+            rows[id] = enabled_row(rows[id], False)
+            self._verify(rows, updated={id})
         values = {
             "Description": name,
             "Protocol": "BOTH" if protocol == "TCP/UDP" else protocol,
@@ -185,8 +200,8 @@ class BellRouter:
         for field, value in values.items():
             self.transport.request("setValue", node(id) + "/" + field, value)
             expected[id][field] = value
-        self._verify(expected)
+        self._verify(expected, updated={id})
         self.transport.request("setValue", node(id) + "/Enable", True)
-        expected[id]["Enable"] = True
-        self._verify(expected)
-        return parse_row(expected[id])
+        expected[id] = enabled_row(expected[id], True)
+        verified = self._verify(expected, updated={id})
+        return parse_row(verified[id])

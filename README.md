@@ -6,10 +6,11 @@ A Python CLI for local Rogers/RDK and Bell/Sagemcom gateways. Detect the gateway
 list mappings, and add, remove, enable or disable individual rules. Unknown router
 interfaces are rejected before login; every write requires confirmation and readback.
 
-Rogers CGM4981COM was tested live. Bell Giga Hub web UI 7.3.28 detection is verified
-live; its forwarding backend is experimental, derived from that firmware's public
-web client and tested in simulation. Authenticated Bell inventory and live forwarding
-acceptance are still pending. Other models/firmware are not automatically supported.
+Tested live: Rogers CGM4981COM and Bell Giga Hub F5689E/5690 (firmware 2.14.1,
+web UI 7.3.28). Bell inventory, create, enable/disable and removal were exercised
+through an authenticated browser, with external TCP and UDP forwarding checks.
+Bell's direct HTTP login has synthetic-test coverage only. Other models/firmware
+are not automatically supported.
 
 ## Run
 

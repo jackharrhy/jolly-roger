@@ -16,6 +16,7 @@ window.jQuery = {gui: {client: {
     user: 'admin', isConnected: () => true,
     newRequest: options => {
         if (options.ajaxRetry !== false) throw Error('retries must be disabled');
+        if (options.ajaxTimeout !== 30000) throw Error('timeout must use milliseconds');
         let execute;
         const target = path => rows.find(r => r.uid === Number(path.match(/@uid='([0-9]+)'/)[1]));
         return {
