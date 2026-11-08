@@ -45,6 +45,8 @@ def test_digest_login_and_read_use_real_firmware_envelope_without_password_on_wi
         assert body["auth-key"] == h(f"{ha1}:{body['id']}:{body['cnonce']}:JSON:/cgi/json-req")
         action = body["actions"][0]
         if action["method"] == "logIn":
+            assert body["priority"] is True
+            assert body["session-id"] == "0"
             return httpx.Response(200, json=reply(action, {"id": 8, "nonce": "synthetic-nonce"}))
         assert body["session-id"] == 8
         return httpx.Response(

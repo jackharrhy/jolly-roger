@@ -114,8 +114,8 @@ class BellHttpTransport:
         ha1 = self._hash(f"{self.username}:{self.nonce}:{self.password_hash}")
         request = {
             "id": index,
-            "session-id": self.session,
-            "priority": False,
+            "session-id": "0" if method == "logIn" else self.session,
+            "priority": method == "logIn",
             "cnonce": cnonce,
             "auth-key": self._hash(f"{ha1}:{index}:{cnonce}:JSON:/cgi/json-req"),
             "actions": [action],
