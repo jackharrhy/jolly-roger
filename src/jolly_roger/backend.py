@@ -63,3 +63,4 @@ class Backend:
     matches: Callable[["Probe"], bool]
     open_http: Callable[[str, str, str], AbstractContextManager[Router]]
     attach_browser: Callable[["Page", str], Router]
+    validate_add: Callable[[RuleSpec], None] = RuleSpec.validate

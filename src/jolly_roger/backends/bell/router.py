@@ -40,6 +40,16 @@ def enabled_row(row, enabled):
     return result
 
 
+def validate_name(name: str) -> None:
+    if len(name) > 64:
+        raise RouterError("Bell service name exceeds 64 characters")
+
+
+def validate_add(rule: RuleSpec) -> None:
+    rule.validate()
+    validate_name(rule.name)
+
+
 class BellRouter(Router):
     def __init__(self, transport):
         self.transport = transport
@@ -90,7 +100,9 @@ class BellRouter(Router):
         row = rows[id]
         if row.get("Service") == "DMZ" or "upnp" in str(row.get("Creator", "")).lower():
             raise RouterError("Refusing mutation of a DMZ or UPnP-managed mapping")
-        return parse_row(row)
+        rule = parse_row(row)
+        validate_name(rule.name)
+        return rule
 
     def _verify(self, expected, updated=()):
         after = self._raw()
@@ -131,7 +143,7 @@ class BellRouter(Router):
         return Removal(rule.id)
 
     def add(self, rule: RuleSpec) -> Rule:
-        rule.validate()
+        validate_add(rule)
         name, protocol, ip, start, end = rule.name, rule.protocol, rule.ip, rule.start, rule.end
         before = self._writable()
 

@@ -177,8 +177,6 @@ def test_simulated_gateway_full_cli_lifecycle():
                 "10.0.0.42",
                 "--start",
                 "54321",
-                "--scan-max-id",
-                "8",
                 "--yes",
                 success=False,
             )

@@ -53,9 +53,6 @@ def parser():
     add.add_argument("--ip", required=True)
     add.add_argument("--start", required=True)
     add.add_argument("--end", help="Inclusive end; defaults to start")
-    add.add_argument(
-        "--scan-max-id", help="Optional bounded gated discovery; cannot supply missing rule state"
-    )
     add.add_argument("--yes", action="store_true", help="Confirm this mutation")
     return p
 
@@ -66,8 +63,6 @@ def validate(args):
         args.max_id = positive(args.max_id)
     if args.command == "add":
         args.rule = RuleSpec.parse(args.name, args.protocol, args.ip, args.start, args.end)
-        if args.scan_max_id is not None:
-            args.scan_max_id = positive(args.scan_max_id)
     if args.backend != "auto":
         validate_backend(args, backends.named_backend(args.backend))
     args.gateway = args.gateway or discover_gateway()
@@ -84,9 +79,10 @@ def validate_backend(args, backend: Backend) -> None:
     backend.capabilities.require(args.command)
     if hasattr(args, "id"):
         args.id = backend.parse_id(args.id)
-    bound = args.max_id if args.command == "scan" else getattr(args, "scan_max_id", None)
-    if bound is not None:
-        backend.capabilities.scan_bound(bound)
+    if args.command == "scan":
+        backend.capabilities.scan_bound(args.max_id)
+    if args.command == "add":
+        backend.validate_add(args.rule)
 
 
 def dispatch(router: Router, args) -> Listing | Rule | Removal | ScanResult:
@@ -100,13 +96,6 @@ def dispatch(router: Router, args) -> Listing | Rule | Removal | ScanResult:
         return router.remove(args.id)
     if args.command in ("enable", "disable"):
         return router.set_enabled(args.id, args.command == "enable")
-    if args.scan_max_id is not None:
-        # Discovery is diagnostic, never authorization to invent absent fields.
-        inventory = router.scan(args.scan_max_id)
-        if any(r.enabled is None for r in inventory.rules):
-            raise RouterError(
-                "Bounded scan found rules without enabled state; refusing add on gated firmware"
-            )
     return router.add(args.rule)
 
 

@@ -32,14 +32,13 @@ class BellHttpTransport:
         try:
             if self.session:
                 self._send("logOut")
-        except RouterError:
-            # Session cleanup must not mask the original operation's outcome.
-            pass
         finally:
-            self.client.close()
-            self.session = 0
-            self.password_hash = ""
-            self.nonce = ""
+            try:
+                self.client.close()
+            finally:
+                self.session = 0
+                self.password_hash = ""
+                self.nonce = ""
 
     def _hash(self, value):
         return hashlib.new(self.algorithm, value.encode()).hexdigest()

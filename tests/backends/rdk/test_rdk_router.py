@@ -7,7 +7,7 @@ from tests.fakes.rdk import GLOBAL, ROW, SyntheticTransport, listing
 
 
 def test_listing_and_validation():
-    from jolly_roger.backends.rdk.router import parse_listing
+    from jolly_roger.backends.rdk.router import parse_listing, validate_add
     from jolly_roger.models import RouterError, Rule, positive
 
     result = parse_listing(listing())
@@ -37,7 +37,9 @@ def test_listing_and_validation():
         )
         args.update(changes)
         with pytest.raises(RouterError):
-            Rule(**args).validate()
+            rule = Rule(**args)
+            rule.validate()
+            validate_add(RuleSpec(rule.name, rule.protocol, rule.ip, rule.start, rule.end))
     with pytest.raises(RouterError):
         parse_listing(listing(ROW.replace('id="PortActive_7"', 'id="PortActive_07"')))
     with pytest.raises(RouterError):

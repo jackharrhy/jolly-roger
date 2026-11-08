@@ -83,3 +83,22 @@ def test_errors_and_redirects_never_leak_response_or_retry():
     with pytest.raises(RouterError):
         transport.request("setValue", "Device/ManagementServer/Enable", True)
     transport.close()
+
+
+@pytest.mark.parametrize("failure", ["logout", "client-close"])
+def test_close_surfaces_cleanup_failure_but_always_forgets_auth_material(monkeypatch, failure):
+    transport = BellHttpTransport("http://127.0.0.1")
+    transport.session = 8
+    transport.password_hash = "synthetic-hash"
+    transport.nonce = "synthetic-nonce"
+
+    def rejected(*args, **kwargs):
+        raise RouterError("synthetic cleanup failure")
+
+    monkeypatch.setattr(transport, "_send", rejected if failure == "logout" else lambda *a: {})
+    if failure == "client-close":
+        monkeypatch.setattr(transport.client, "close", rejected)
+    with pytest.raises(RouterError):
+        transport.close()
+    assert transport.session == 0
+    assert transport.password_hash == transport.nonce == ""

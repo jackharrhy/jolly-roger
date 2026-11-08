@@ -114,6 +114,16 @@ def parse_edit(html, id) -> PartialRule | None:
     return PartialRule(id, name, start, end, ip, protocol, None, ipv6)
 
 
+def validate_name(name: str) -> None:
+    if len(name) > 63 or any(ord(c) > 126 or c in "<>&\"'|" for c in name):
+        raise RouterError("Unsupported RDK service name; use at most 63 safe ASCII characters")
+
+
+def validate_add(rule: RuleSpec) -> None:
+    rule.validate()
+    validate_name(rule.name)
+
+
 class RdkRouter(Router):
     capabilities = Capabilities(scan_limit=999, global_toggle=True)
 
@@ -127,7 +137,7 @@ class RdkRouter(Router):
 
     def scan(self, max_id: int | str) -> ScanResult:
         """Read every edit page in an explicit bound; gaps never terminate discovery."""
-        maximum = positive(max_id, 999)
+        maximum = self.capabilities.scan_bound(max_id)
         state = self.status()
         known = {r.id: r for r in state.rules}
         rules: list[Rule | PartialRule] = []
@@ -190,6 +200,7 @@ class RdkRouter(Router):
         if rule is None:
             raise RouterError("Rule ID not present in visible inventory")
         rule.validate()
+        validate_name(rule.name)
         return rule
 
     def _verify(self, before, expected):
@@ -224,7 +235,7 @@ class RdkRouter(Router):
         return Removal(id)
 
     def add(self, rule: RuleSpec) -> Rule:
-        rule.validate()
+        validate_add(rule)
         name, protocol, ip = rule.name, rule.protocol, rule.ip
         before = self._writable()
         for existing in before.rules:

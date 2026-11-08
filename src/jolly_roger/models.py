@@ -55,10 +55,10 @@ class RuleSpec:
             or int(address) == 0xFFFFFFFF
         ):
             raise RouterError("Expected unicast IPv4 target")
-        if not (1 <= len(self.name) <= 63) or self.name.strip() != self.name:
-            raise RouterError("Name must be 1–63 characters without outer whitespace")
-        if any(ord(c) < 32 or ord(c) > 126 or c in "<>&\"'|" for c in self.name):
-            raise RouterError("Unsupported service name characters")
+        if not isinstance(self.name, str) or not self.name or self.name.strip() != self.name:
+            raise RouterError("Name must be nonempty without outer whitespace")
+        if not self.name.isprintable():
+            raise RouterError("Name must contain printable characters")
 
 
 @dataclass(frozen=True)
