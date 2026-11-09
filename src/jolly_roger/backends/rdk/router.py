@@ -127,8 +127,6 @@ def validate_add(rule: RuleSpec) -> None:
 class RdkRouter(Router):
     capabilities = Capabilities(scan_limit=999, global_toggle=True)
 
-    """Transport supplies get(relative_path) and post(fields); no credentials here."""
-
     def __init__(self, transport):
         self.transport = transport
 
@@ -275,6 +273,6 @@ class RdkRouter(Router):
             rule.start,
             rule.end,
             True,
-        ) or actual.ipv6 not in ("", "x"):
+        ) or actual.ipv6 != "":
             raise RouterError("Add verification failed; inspect before retrying")
         return actual

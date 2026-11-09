@@ -63,11 +63,10 @@ authentication, wire protocol and state verification. The CLI knows neither fami
 To add a family, implement `Router`, declare a `Backend` in its package, and register
 it in `backends/__init__.py`. No CLI branches or dynamic plugin machinery are needed.
 Use `RuleSpec` for additions; both backends return the same typed results, including
-`Removal` and bounded `ScanResult` with explicit partial records. Old flat Python
-module paths are removed; core shell commands remain unchanged. The obsolete add
-option `--scan-max-id` is removed: use `scan` separately for diagnostics; it never
-authorizes a write against an incomplete inventory. Provider-owned input validators
-apply the actual family restrictions before authentication and during direct calls.
+`Removal` and bounded `ScanResult` with explicit partial records. Use `scan` for
+diagnostics; it never authorizes a write against an incomplete inventory.
+Provider-owned input validators apply the actual family restrictions before
+authentication and during direct calls.
 The test suite includes a synthetic third backend with opaque identifiers.
 
 Development checks: `uv run pytest -q`, `uv run mypy --check-untyped-defs src/jolly_roger`,

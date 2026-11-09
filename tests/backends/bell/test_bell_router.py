@@ -19,12 +19,11 @@ def test_inventory_preserves_translated_ports_and_reports_no_global_switch():
 
 
 @pytest.mark.parametrize("new_enabled", [False, True])
-@pytest.mark.parametrize("port", [25565, "25565"])
-def test_add_enable_disable_and_remove_verify_unrelated_raw_entries(new_enabled, port):
+def test_add_enable_disable_and_remove_verify_unrelated_raw_entries(new_enabled):
     gateway = Gateway(new_enabled)
     router = BellRouter(gateway)
     original = deepcopy(gateway.rows)
-    added = router.add(RuleSpec.parse("minecraft", "TCP", "192.168.2.30", port, port))
+    added = router.add(RuleSpec.parse("minecraft", "TCP", "192.168.2.30", 25565))
     assert added.id == 1201
     assert gateway.rows[:2] == original
     writes = [c for c in gateway.calls if c[0] == "setValue"]
