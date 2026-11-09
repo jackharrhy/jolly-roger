@@ -1,71 +1,25 @@
-"""Parse server-rendered values, never execute gateway JavaScript."""
+"""Parse RDK server-rendered values; never execute gateway JavaScript."""
 
 import re
-from dataclasses import dataclass
-from ipaddress import IPv4Address
 
 from bs4 import BeautifulSoup
 
-
-def positive(value, maximum=65535):
-    if type(value) not in (str, int) or not re.fullmatch(r"[1-9][0-9]*", str(value)):
-        raise RouterError("Expected canonical positive decimal integer")
-    number = int(value)
-    if number > maximum:
-        raise RouterError(f"Integer exceeds {maximum}")
-    return number
-
-
-@dataclass(frozen=True)
-class Rule:
-    id: int
-    name: str
-    protocol: str
-    ip: str
-    start: int
-    end: int
-    enabled: bool
-    ipv6: str = ""
-
-    def validate(self):
-        positive(self.id, 999)
-        positive(self.start)
-        positive(self.end)
-        if self.start > self.end:
-            raise RouterError("Start port exceeds end port")
-        if self.protocol not in ("TCP", "UDP", "TCP/UDP"):
-            raise RouterError("Unsupported protocol")
-        try:
-            address = IPv4Address(self.ip)
-        except ValueError:
-            raise RouterError("Expected IPv4 address") from None
-        if (
-            address.is_unspecified
-            or address.is_multicast
-            or address.is_loopback
-            or int(address) == 0xFFFFFFFF
-        ):
-            raise RouterError("Expected unicast IPv4 target")
-        if not (1 <= len(self.name) <= 63) or self.name.strip() != self.name:
-            raise RouterError("Name must be 1–63 characters without outer whitespace")
-        if any(ord(c) < 32 or ord(c) > 126 or c in "<>&\"'|" for c in self.name):
-            raise RouterError("Unsupported service name characters")
-        if type(self.enabled) is not bool:
-            raise RouterError("Missing rule enabled state")
-        if self.ipv6 not in ("", "x"):
-            raise RouterError("IPv6 rules are not supported for mutation")
+from ...backend import Capabilities, Router
+from ...models import (
+    Listing,
+    PartialRule,
+    Removal,
+    RouterError,
+    Rule,
+    RuleId,
+    RuleSpec,
+    ScanResult,
+    positive,
+)
 
 
-class RouterError(ValueError):
-    pass
-
-
-@dataclass
-class Listing:
-    enabled: bool
-    rules: list
-    complete: bool
-    scope: str = "visible local forwarding rules; excludes HS/UPnP/system entries"
+def parse_id(value):
+    return positive(value, 999)
 
 
 def parse_listing(html):
@@ -77,28 +31,34 @@ def parse_listing(html):
             "Missing or ambiguous global forwarding state; authentication/firmware unknown"
         )
     table = soup.find("table", summary="This table list available port forwarding entries")
-    rules = []
+    rules: list[Rule] = []
     if table is not None:
         for row in table.find_all("tr"):
             if row.find_parent("tfoot") or row.find("th"):
                 continue
-            cells = {
-                " ".join(td.get("headers", [])): td.get_text(strip=True)
-                for td in row.find_all("td")
-            }
+            cells = {}
+            for td in row.find_all("td"):
+                headers = td.get("headers")
+                key = headers if isinstance(headers, str) else " ".join(headers or [])
+                cells[key] = td.get_text(strip=True)
             checkbox = row.find("input", attrs={"name": "PortActive", "type": "checkbox"})
-            if not checkbox or not checkbox.get("id", "").startswith("PortActive_"):
+            identifier = checkbox.get("id") if checkbox else None
+            if (
+                checkbox is None
+                or not isinstance(identifier, str)
+                or not identifier.startswith("PortActive_")
+            ):
                 raise RouterError("Missing rule state")
             try:
                 rule = Rule(
-                    positive(checkbox["id"].removeprefix("PortActive_"), 999),
+                    parse_id(identifier.removeprefix("PortActive_")),
                     cells["service-name"],
                     cells["service-type"],
                     cells["server-ip"],
                     positive(cells["start-port"]),
                     positive(cells["end-port"]),
                     checkbox.has_attr("checked"),
-                    cells["server-ipv6"],
+                    "" if cells["server-ipv6"] == "x" else cells["server-ipv6"],
                 )
             except KeyError:
                 raise RouterError("Missing rule fields") from None
@@ -107,10 +67,15 @@ def parse_listing(html):
             if any(other.id == rule.id for other in rules):
                 raise RouterError("Duplicate rule ID")
             rules.append(rule)
-    return Listing(states[0] == "true", rules, table is not None)
+    return Listing(
+        states[0] == "true",
+        rules,
+        table is not None,
+        "visible local forwarding rules; excludes HS/UPnP/system entries",
+    )
 
 
-def parse_edit(html, id):
+def parse_edit(html, id) -> PartialRule | None:
     """The gated source exposes name/ports/IPv6, NOT IPv4/protocol/enabled."""
     from html import unescape
 
@@ -129,46 +94,54 @@ def parse_edit(html, id):
     name, start, end = (literal(v) for v in ("service_name", "startport", "endport"))
     if not name or not start or not end:
         return None
-    result = {
-        "id": id,
-        "name": name,
-        "start": positive(start),
-        "end": positive(end),
-        "ip": None,
-        "protocol": None,
-        "enabled": None,
-        "ipv6": literal("jsV6ServerIP"),
-    }
-    if result["start"] > result["end"]:
+    start, end = positive(start), positive(end)
+    if start > end:
         raise RouterError("Invalid edit-page port range")
+    ip, protocol = None, None
+    ipv6 = literal("jsV6ServerIP")
+    if ipv6 == "x":
+        ipv6 = ""
     fields = [soup.find("input", id=f"server_ip_address_{n}") for n in range(1, 5)]
-    if all(field is not None and field.has_attr("value") for field in fields):
-        result["ip"] = ".".join(field["value"] for field in fields)
+    values = [field.get("value") if field is not None else None for field in fields]
+    octets = [value for value in values if isinstance(value, str)]
+    if len(octets) == 4:
+        ip = ".".join(octets)
     select = soup.find("select", id="service_type")
     if select:
         selected = select.find_all("option", selected=True)
         if len(selected) == 1 and selected[0].get_text(strip=True) in ("TCP", "UDP", "TCP/UDP"):
-            result["protocol"] = selected[0].get_text(strip=True)
-    return result
+            protocol = selected[0].get_text(strip=True)
+    return PartialRule(id, name, start, end, ip, protocol, None, ipv6)
 
 
-class Router:
+def validate_name(name: str) -> None:
+    if len(name) > 63 or any(ord(c) > 126 or c in "<>&\"'|" for c in name):
+        raise RouterError("Unsupported RDK service name; use at most 63 safe ASCII characters")
+
+
+def validate_add(rule: RuleSpec) -> None:
+    rule.validate()
+    validate_name(rule.name)
+
+
+class RdkRouter(Router):
+    capabilities = Capabilities(scan_limit=999, global_toggle=True)
+
     """Transport supplies get(relative_path) and post(fields); no credentials here."""
 
     def __init__(self, transport):
         self.transport = transport
 
-    def status(self):
+    def status(self) -> Listing:
         return parse_listing(self.transport.get("port_forwarding.jst"))
 
-    def scan(self, max_id):
+    def scan(self, max_id: int | str) -> ScanResult:
         """Read every edit page in an explicit bound; gaps never terminate discovery."""
-        from dataclasses import asdict
-
-        maximum = positive(max_id, 999)
+        maximum = self.capabilities.scan_bound(max_id)
         state = self.status()
-        known = {r.id: asdict(r) for r in state.rules}
-        rules, unresolved = [], []
+        known = {r.id: r for r in state.rules}
+        rules: list[Rule | PartialRule] = []
+        unresolved = []
         for id in range(1, maximum + 1):
             html = self.transport.get(f"port_forwarding_edit.jst?id={id}")
             partial = parse_edit(html, id)
@@ -178,15 +151,15 @@ class Router:
                 rules.append(partial)
             else:
                 unresolved.append(id)
-        return {
-            "enabled": state.enabled,
-            "complete": False,
-            "max_id": maximum,
-            "rules": rules,
-            "unresolved_ids": unresolved,
-            "scope": "Bounded discovery only; unresolved IDs may be absent, hidden, or unreadable. "
+        return ScanResult(
+            enabled=state.enabled,
+            rules=rules,
+            complete=False,
+            max_id=maximum,
+            unresolved_ids=unresolved,
+            scope="Bounded discovery only; unresolved IDs may be absent, hidden, or unreadable. "
             "IDs beyond max_id were not queried; null fields are unknown.",
-        }
+        )
 
     def _writable(self):
         state = self.status()
@@ -210,7 +183,7 @@ class Router:
         if result not in ("", "Success!"):
             raise RouterError("Router rejected operation; inspect state before retrying")
 
-    def set_global(self, enabled):
+    def set_global(self, enabled: bool) -> Listing:
         if type(enabled) is not bool:
             raise RouterError("Expected boolean global state")
         before = self.status()
@@ -227,6 +200,7 @@ class Router:
         if rule is None:
             raise RouterError("Rule ID not present in visible inventory")
         rule.validate()
+        validate_name(rule.name)
         return rule
 
     def _verify(self, before, expected):
@@ -237,10 +211,10 @@ class Router:
             )
         return after
 
-    def set_enabled(self, id, enabled):
+    def set_enabled(self, id: RuleId, enabled: bool) -> Rule:
         from dataclasses import replace
 
-        id = positive(id, 999)
+        id = parse_id(id)
         if type(enabled) is not bool:
             raise RouterError("Expected boolean rule state")
         before = self._writable()
@@ -252,25 +226,17 @@ class Router:
         self._verify(before, [updated if r.id == id else r for r in before.rules])
         return updated
 
-    def remove(self, id):
-        id = positive(id, 999)
+    def remove(self, id: RuleId) -> Removal:
+        id = parse_id(id)
         before = self._writable()
         self._target(before, id)
         self._post({"del": str(id)})
         self._verify(before, [r for r in before.rules if r.id != id])
-        return {"removed": id, "verified": True}
+        return Removal(id)
 
-    def add(self, name, protocol, ip, start, end=None):
-        rule = Rule(
-            1,
-            name,
-            protocol,
-            ip,
-            positive(start),
-            positive(end if end is not None else start),
-            True,
-        )
-        rule.validate()
+    def add(self, rule: RuleSpec) -> Rule:
+        validate_add(rule)
+        name, protocol, ip = rule.name, rule.protocol, rule.ip
         before = self._writable()
         for existing in before.rules:
             same_protocol = protocol == existing.protocol or "TCP/UDP" in (

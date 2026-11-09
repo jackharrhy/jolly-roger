@@ -11,7 +11,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs
 
 from playwright.sync_api import sync_playwright
-from test_cli import run
+
+from tests.cli import run
 
 
 def test_simulated_gateway_full_cli_lifecycle():
@@ -46,7 +47,7 @@ def test_simulated_gateway_full_cli_lifecycle():
         def do_GET(self):
             requests.append(("GET", self.path))
             if self.path == "/":
-                return self.send("<h1>Synthetic login</h1>", login=True)
+                return self.send('<form action="check.jst" method="post"></form>', login=True)
             if self.headers.get("Cookie") != "synthetic_session=authenticated":
                 return self.send("unauthenticated", 401)
             if self.path == "/port_forwarding.jst":
@@ -176,8 +177,6 @@ def test_simulated_gateway_full_cli_lifecycle():
                 "10.0.0.42",
                 "--start",
                 "54321",
-                "--scan-max-id",
-                "8",
                 "--yes",
                 success=False,
             )

@@ -3,8 +3,9 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
-from .browser import gateway_origin
-from .router import RouterError, parse_listing
+from ...gateway import gateway_origin
+from ...models import RouterError
+from .router import parse_listing
 
 
 class HttpTransport:

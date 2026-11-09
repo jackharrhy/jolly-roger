@@ -1,10 +1,9 @@
 """Authenticated same-origin fetch; tokens and cookies stay inside Chromium."""
 
 import re
-from ipaddress import IPv4Address
-from urllib.parse import urlsplit
 
-from .router import RouterError
+from ...gateway import gateway_origin
+from ...models import RouterError
 
 # This is our fixed code, not JavaScript extracted from the gateway.
 FETCH = r"""async ({origin, path, fields}) => {
@@ -44,28 +43,6 @@ FETCH = r"""async ({origin, path, fields}) => {
         return {text: doc.documentElement.outerHTML};
     } catch (_) { return {error: 'request'}; }
 }"""
-
-
-def gateway_origin(value):
-    parsed = urlsplit(value)
-    try:
-        address = IPv4Address(parsed.hostname or "")
-        port = parsed.port
-    except ValueError:
-        raise RouterError("Gateway must be a local IPv4 HTTP(S) origin") from None
-    if (
-        parsed.scheme not in ("http", "https")
-        or not (address.is_private or address.is_loopback)
-        or address.is_unspecified
-        or address.is_multicast
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in ("", "/")
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise RouterError("Gateway must be a local IPv4 HTTP(S) origin without credentials/path")
-    return f"{parsed.scheme}://{address}" + (f":{port}" if port else "")
 
 
 class BrowserTransport:

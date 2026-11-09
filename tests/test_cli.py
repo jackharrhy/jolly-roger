@@ -1,17 +1,6 @@
+from tests.cli import run
+
 """CLI validation tests; no real gateway traffic."""
-
-import subprocess
-import sys
-
-
-def run(*args):
-    return subprocess.run(
-        [sys.executable, "-m", "jolly_roger", *args],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
-    )
 
 
 def test_help_and_validation_before_authentication():
@@ -34,7 +23,7 @@ def test_help_and_validation_before_authentication():
             "--yes",
         ),
     ]:
-        result = run("--cdp-url", "http://127.0.0.1:1", *args)
+        result = run("--backend", "rdk", "--cdp-url", "http://127.0.0.1:1", *args)
         assert result.returncode == 2
         assert "CDP" not in result.stderr
         assert "Traceback" not in result.stderr
