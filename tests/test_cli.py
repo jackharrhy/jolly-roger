@@ -1,7 +1,5 @@
 from tests.cli import run
 
-"""CLI validation tests; no real gateway traffic."""
-
 
 def test_help_and_validation_before_authentication():
     help_result = run("--help")

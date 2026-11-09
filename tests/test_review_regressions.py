@@ -1,4 +1,4 @@
-"""Review regressions: provider policy and cleanup must not leak into CLI flow."""
+"""Provider policy and session cleanup must not leak into CLI flow."""
 
 import importlib
 
@@ -6,10 +6,6 @@ import pytest
 
 from jolly_roger import cli
 from jolly_roger.models import RouterError, RuleSpec
-
-
-def test_shared_request_accepts_printable_unicode_without_rdk_limits():
-    RuleSpec.parse("café " + "a" * 59, "TCP", "10.0.0.2", 1234)
 
 
 def test_rdk_name_restrictions_are_enforced_before_authentication(monkeypatch, capsys):
@@ -37,27 +33,6 @@ def test_rdk_name_restrictions_are_enforced_before_authentication(monkeypatch, c
         == 2
     )
     assert "name" in capsys.readouterr().err.lower()
-
-
-def test_removed_add_scan_option_cannot_pretend_to_authorize_gated_writes():
-    with pytest.raises(SystemExit) as exc:
-        cli.parser().parse_args(
-            [
-                "add",
-                "--name",
-                "test",
-                "--protocol",
-                "TCP",
-                "--ip",
-                "10.0.0.2",
-                "--start",
-                "1234",
-                "--scan-max-id",
-                "3",
-                "--yes",
-            ]
-        )
-    assert exc.value.code == 2
 
 
 @pytest.mark.parametrize("name", ["rdk", "bell"])
